@@ -1,0 +1,368 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "WA Service API",
+    "version": "0.1.0",
+    "description": "WhatsApp service with wwebjs + TypeORM + BullMQ"
+  },
+  "servers": [
+    { "url": "http://localhost:3030", "description": "Local" },
+     { "url": "http://localhost:3100", "description": "Local 2" }
+  ],
+  "security": [ { "ApiKeyAuth": [] } ],
+  "tags": [
+    { "name": "Health", "description": "Health and status" },
+    { "name": "Accounts", "description": "Manage WhatsApp accounts" },
+    { "name": "Sessions", "description": "Session lifecycle and control" },
+    { "name": "Messages", "description": "Send and manage messages" },
+    { "name": "Jobs", "description": "Background job status" },
+    { "name": "Inbound", "description": "Inbound messages" },
+    { "name": "Broadcasts", "description": "Broadcast campaigns" },
+    { "name": "Config", "description": "Application configuration" },
+    { "name": "Automation", "description": "n8n automation integration" }
+  ],
+
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "tags": ["Health"],
+        "responses": { "200": { "description": "OK" } },
+        "security": []
+      }
+    },
+    "/accounts": {
+      "get": {
+        "tags": ["Accounts"],
+        "summary": "List WhatsApp accounts",
+        "responses": {
+          "200": {
+            "description": "List of accounts",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/WhatsAppAccount" } } } }
+          }
+        }
+      }
+    },
+    "/accounts/{clientId}/start": {
+      "post": {
+        "tags": ["Accounts"],
+        "summary": "Start or initialize a WA client",
+        "parameters": [ { "in": "path", "name": "clientId", "schema": { "type": "string" }, "required": true } ],
+        "responses": {
+          "200": { "description": "Account row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WhatsAppAccount" } } } },
+          "409": { "description": "Session is DISCONNECTED; use reconnect" }
+        }
+      }
+    },
+    "/accounts/{clientId}/reconnect": {
+      "post": {
+        "tags": ["Accounts"],
+        "summary": "Explicitly reconnect a DISCONNECTED client and generate QR",
+        "parameters": [ { "in": "path", "name": "clientId", "schema": { "type": "string" }, "required": true } ],
+        "responses": {
+          "200": { "description": "Account row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WhatsAppAccount" } } } },
+          "400": { "description": "Failed to reconnect" }
+        }
+      }
+    },
+    "/sessions/{clientId}/reconnect": {
+      "post": {
+        "tags": ["Sessions"],
+        "summary": "Alias to reconnect a session and generate QR",
+        "parameters": [ { "in": "path", "name": "clientId", "schema": { "type": "string" }, "required": true } ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": { "schema": { "type": "object", "properties": { "dataPath": { "type": "string" }, "puppeteer": { "type": "object", "additionalProperties": true } } } }
+          }
+        },
+        "responses": {
+          "200": { "description": "Account row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WhatsAppAccount" } } } },
+          "400": { "description": "Failed to reconnect" }
+        }
+      }
+    },
+    "/sessions": {
+      "post": {
+        "tags": ["Sessions"],
+        "summary": "Create or start a WhatsApp session",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["clientId"],
+                "properties": {
+                  "clientId": { "type": "string" },
+                  "dataPath": { "type": "string" },
+                  "puppeteer": { "type": "object", "additionalProperties": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Account row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WhatsAppAccount" } } } },
+          "409": { "description": "Session is DISCONNECTED; use reconnect" }
+        }
+      }
+    },
+    "/accounts/{clientId}/qr": {
+      "get": {
+        "tags": ["Accounts"],
+        "summary": "Get last QR for client",
+        "parameters": [ { "in": "path", "name": "clientId", "schema": { "type": "string" }, "required": true } ],
+        "responses": {
+          "200": { "description": "QR payload", "content": { "application/json": { "schema": { "type": "object", "properties": { "clientId": { "type": "string" }, "qr": { "type": "string" } } } } } },
+          "404": { "description": "No QR yet" }
+        }
+      }
+    },
+    "/accounts/{clientId}/validate-number": {
+      "get": {
+        "tags": ["Accounts"],
+        "summary": "Validate whether a phone number is registered on WhatsApp",
+        "parameters": [
+          { "in": "path", "name": "clientId", "schema": { "type": "string" }, "required": true },
+          { "in": "query", "name": "number", "schema": { "type": "string" }, "required": true, "description": "Phone number (accepts formats like 0813..., 8..., +628..., 628...)" }
+        ],
+        "responses": {
+          "200": { "description": "Validation result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ValidateNumberResponse" } } } },
+          "400": { "description": "Bad Request" }
+        }
+      }
+    },
+    "/messages": {
+      "post": {
+        "tags": ["Messages"],
+        "summary": "Enqueue a message",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendMessageRequest" } } } },
+        "responses": { "200": { "description": "Job created", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "integer" }, "status": { "type": "string" } } } } } } }
+      }
+    },
+    "/jobs/{id}": {
+      "get": {
+        "tags": ["Jobs"],
+        "summary": "Get job status",
+        "parameters": [ { "in": "path", "name": "id", "schema": { "type": "integer" }, "required": true } ],
+        "responses": { "200": { "description": "Job row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageJob" } } } }, "404": { "description": "Not found" } }
+      }
+    },
+    "/inbound": {
+      "get": {
+        "tags": ["Inbound"],
+        "summary": "List recent inbound messages",
+        "parameters": [
+          { "in": "query", "name": "clientId", "schema": { "type": "string" } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Inbound messages",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/InboundMessage" } } } }
+          }
+        }
+      }
+    },
+    "/broadcasts": {
+      "post": {
+        "tags": ["Broadcasts"],
+        "summary": "Create a broadcast campaign",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BroadcastRequest" } } } },
+        "responses": { "200": { "description": "Broadcast created", "content": { "application/json": { "schema": { "type": "object", "properties": { "id": { "type": "integer" }, "status": { "type": "string" }, "recipients": { "type": "integer" } } } } } } }
+      }
+    },
+    "/broadcasts/{id}": {
+      "get": {
+        "tags": ["Broadcasts"],
+        "summary": "Get broadcast status",
+        "parameters": [ { "in": "path", "name": "id", "schema": { "type": "integer" }, "required": true } ],
+        "responses": { "200": { "description": "Broadcast row + stats", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BroadcastWithStats" } } } }, "404": { "description": "Not found" } }
+      }
+    },
+    "/accounts/{clientId}": {
+      "delete": {
+        "tags": ["Accounts"],
+        "summary": "Purge a session (stop, remove LocalAuth folder, delete DB row)",
+        "parameters": [ { "in": "path", "name": "clientId", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Purged" }, "400": { "description": "Failed" } }
+      }
+    },
+    "/sessions/{clientId}": {
+      "delete": {
+        "tags": ["Sessions"],
+        "summary": "Alias to purge a session (same behavior as /accounts/{clientId})",
+        "parameters": [ { "in": "path", "name": "clientId", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Purged" }, "400": { "description": "Failed" } }
+      }
+    },
+    "/config": {
+      "post": {
+        "tags": ["Config"],
+        "summary": "Set a config key in DB",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SetConfigRequest" } } } },
+        "responses": { "200": { "description": "Config row", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Config" } } } } }
+      }
+    },
+    "/config/{key}": {
+      "get": {
+        "tags": ["Config"],
+        "summary": "Get a config value from DB",
+        "parameters": [ { "in": "path", "name": "key", "schema": { "type": "string" }, "required": true } ],
+        "responses": { "200": { "description": "Config value", "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" }, "value": { "type": "string" } } } } } }, "404": { "description": "Not found" } }
+      }
+    }
+    ,
+    "/automation/config/{clientId}": {
+      "get": {
+        "tags": ["Automation"],
+        "summary": "Get automation config for a client",
+        "parameters": [ { "in": "path", "name": "clientId", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Automation config" } }
+      }
+    },
+    "/automation/config": {
+      "post": {
+        "tags": ["Automation"],
+        "summary": "Set automation config (per client or global)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "clientId": { "type": "string" }, "webhookUrl": { "type": "string" }, "secret": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "Saved" } }
+      }
+    },
+    "/automation/reply": {
+      "post": {
+        "tags": ["Automation"],
+        "summary": "Receive reply from automation and enqueue WA message",
+        "security": [],
+        "parameters": [ { "in": "header", "name": "x-automation-secret", "schema": { "type": "string" }, "required": true } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendMessageRequest" } } } },
+        "responses": { "201": { "description": "Queued" }, "401": { "description": "Invalid secret" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-api-key" }
+    },
+    "schemas": {
+      "WhatsAppAccount": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "clientId": { "type": "string" },
+          "status": { "type": "string" },
+          "lastConnectedAt": { "type": "string", "format": "date-time" },
+          "lastDisconnectedAt": { "type": "string", "format": "date-time" },
+          "lastQr": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MessageJob": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "clientId": { "type": "string" },
+          "to": { "type": "string" },
+          "text": { "type": "string" },
+          "status": { "type": "string" },
+          "attempts": { "type": "integer" },
+          "maxAttempts": { "type": "integer" },
+          "nextRunAt": { "type": "string", "format": "date-time" },
+          "broadcastId": { "type": "integer" },
+          "lastError": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "InboundMessage": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "clientId": { "type": "string" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "body": { "type": "string" },
+          "fromMe": { "type": "boolean" },
+          "ts": { "type": "integer" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Broadcast": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "text": { "type": "string" },
+          "clientId": { "type": "string" },
+          "status": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BroadcastWithStats": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Broadcast" },
+          { "type": "object", "properties": { "stats": { "type": "object", "properties": { "queued": { "type": "integer" }, "processing": { "type": "integer" }, "sent": { "type": "integer" }, "failed": { "type": "integer" } } } } }
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "key": { "type": "string" },
+          "value": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "required": ["clientId", "to", "text"],
+        "properties": {
+          "clientId": { "type": "string" },
+          "to": { "type": "string" },
+          "text": { "type": "string" },
+          "maxAttempts": { "type": "integer", "default": 8 }
+        }
+      },
+      "BroadcastRequest": {
+        "type": "object",
+        "required": ["clientId", "text", "recipients"],
+        "properties": {
+          "clientId": { "type": "string" },
+          "name": { "type": "string" },
+          "text": { "type": "string" },
+          "recipients": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "SetConfigRequest": {
+        "type": "object",
+        "required": ["key", "value"],
+        "properties": { "key": { "type": "string" }, "value": { "type": "string" } }
+      }
+      ,
+      "ValidateNumberResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "input": { "type": "string" },
+              "number": { "type": "string" },
+              "waId": { "type": "string" },
+              "isRegistered": { "type": "boolean" },
+              "wid": { "type": "string", "nullable": true }
+            }
+          },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: wa_redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    container_name: wa_service
+    restart: unless-stopped
+    depends_on:
+      - redis
+    ports:
+      - "3100:3100"
+    # Load base env from .env, then override critical runtime values
+    env_file:
+      - .env
+    environment:
+      # Point BullMQ to the internal Redis hostname
+      REDIS_URL: redis://redis:6379
+      # Persist DB and WA sessions in a mounted volume
+      SQLITE_PATH: /data/db.sqlite
+      WWEBJS_DATA_PATH: /data/sessions
+      # Ensure chromium in container is used
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    volumes:
+      - app-data:/data
+
+volumes:
+  app-data:
+  redis-data:
+
